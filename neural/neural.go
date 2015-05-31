@@ -75,12 +75,13 @@ func (net *Network) Activate(input []float64) (result []float64) {
 	return
 }
 
-func (layer *Layer) backpropagate(input []float64, err []float64, rate float64, accel float64) (residual []float64) {
+func (layer *Layer) backpropagate(input []float64, err []float64, rate float64, lambda float64) (residual []float64) {
 	residual = make([]float64, len(layer.Weight[0]))
 	for i, weight := range layer.Weight {
 		cost := err[i] * layer.value[i] * (1.0 - layer.value[i])
 		for j := 0; j < len(weight); j++ {
-			residual[j] += cost * weight[j]
+			theta := weight[j]
+			residual[j] += cost * theta
 			weight[j] += rate * cost * input[j]
 		}
 		layer.Bias[i] += rate * cost
@@ -88,13 +89,50 @@ func (layer *Layer) backpropagate(input []float64, err []float64, rate float64, 
 	return
 }
 
-func (net *Network) Train(input []float64, expected []float64, rate float64, accel float64) {
+func (net *Network) Train(input []float64, expected []float64, rate float64, lambda float64) {
+	// Regularize
+	m := len(input)
+	theta1Grad, theta2Grad := net.RegularizationGrads(m, lambda)
+
+	// Perform training
 	err := make([]float64, len(net.Output.value))
 	for i := 0; i < len(err); i++ {
 		err[i] = expected[i] - net.Output.value[i]
 	}
-	residual := net.Output.backpropagate(net.Hidden.value, err, rate, accel)
-	net.Hidden.backpropagate(input, residual, rate, accel)
+	residual := net.Output.backpropagate(net.Hidden.value, err, rate, lambda)
+	net.Hidden.backpropagate(input, residual, rate, lambda)
+	net.SubtractGradients(theta1Grad, theta2Grad)
+}
+
+func (net Network) RegularizationGrads(numInputs int, lambda float64) (theta1Grad [][]float64, theta2Grad [][]float64) {
+	lambdaOverM := lambda / float64(numInputs)
+	theta1Grad = net.Hidden.Weight
+	theta2Grad = net.Output.Weight
+	for _, weight := range theta1Grad {
+		for j := 0; j < len(weight); j++ {
+			weight[j] = weight[j] * lambdaOverM
+		}
+	}
+	for _, weight := range theta2Grad {
+		for j := 0; j < len(weight); j++ {
+			weight[j] = weight[j] * lambdaOverM
+		}
+	}
+	return theta1Grad, theta2Grad
+}
+
+func (net *Network) SubtractGradients(theta1Grad [][]float64, theta2Grad [][]float64) {
+	for i, weight := range net.Hidden.Weight {
+		for j := 0; j < len(weight); j++ {
+			weight[j] -= theta1Grad[i][j]
+		}
+	}
+	for i, weight := range net.Output.Weight {
+		for j := 0; j < len(weight); j++ {
+			weight[j] -= theta2Grad[i][j]
+		}
+	}
+	return
 }
 
 func (net *Network) String() string {
@@ -125,4 +163,22 @@ func MeanSquaredError(result []float64, expected []float64) float64 {
 		sum += math.Pow(float64(expected[i]-result[i]), 2)
 	}
 	return float64(sum) / float64(len(result))
+}
+
+func (net *Network) RegularizedCost(result []float64, expected []float64, lambda float64) float64 {
+	cost := MeanSquaredError(result, expected)
+	var regularization float64
+	for _, weights := range net.Hidden.Weight {
+		for _, weight := range weights {
+			regularization += math.Pow(weight, 2)
+		}
+	}
+	for _, weights := range net.Output.Weight {
+		for _, weight := range weights {
+			regularization += math.Pow(weight, 2)
+		}
+	}
+	regularization = regularization * (lambda / float64(2*len(result)))
+	cost += regularization
+	return cost
 }
